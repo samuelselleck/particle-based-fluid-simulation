@@ -10,10 +10,22 @@ use piston::input::{RenderArgs, RenderEvent, UpdateArgs, UpdateEvent};
 use piston::window::WindowSettings;
 
 use rand::Rng;
+use std::collections::HashMap;
+
+const KERNEL_RADIUS: f64 = 20.0;
+const KR_SQUARED: f64 = KERNEL_RADIUS*KERNEL_RADIUS;
+const BUCKET_SIZE: f64 = KERNEL_RADIUS;
+
+const WINDOW_WIDTH: f64 = 1000.0;
+const WINDOW_HEIGHT: f64 = 800.0;
+
+const HORIZONTAL_BUCKET_COUNT: i32 = 
+    (WINDOW_WIDTH as f64/KERNEL_RADIUS) as i32 + 1;
 
 pub struct App {
     gl: GlGraphics,
     particles: Vec<Particle>,
+    buckets: HashMap<i32, Vec<i32>>,
 }
 
 pub struct Particle {
@@ -40,10 +52,6 @@ impl Vec2d {
 
     fn dist(&self, other: &Vec2d) -> f64 {
         self.dist_squared(other).sqrt()
-    }
-
-    fn norm(&self) -> f64 {
-        (self.x*self.x + self.y*self.y).sqrt()
     }
 
     fn add(&mut self, other: &Vec2d) -> &mut Vec2d {
@@ -74,9 +82,6 @@ impl Vec2d {
         Vec2d {x: self.x, y: self.y}
     }
 }
-
-const KERNEL_RADIUS: f64 = 20.0;
-const KR_SQUARED: f64 = KERNEL_RADIUS*KERNEL_RADIUS;
 
 impl App {
     fn render(&mut self, args: &RenderArgs) {
@@ -169,6 +174,9 @@ impl App {
 
         //Update positions:
         for i in 0..p.len() {
+
+            let old_bucket = get_pos_hash(&p[i].position);
+
             p[i].velocity.add(p[i].force.mult(DT/p[i].density));
             p[i].position.add(p[i].velocity.copy().mult(DT));
 
@@ -191,15 +199,35 @@ impl App {
                 p[i].velocity.x *= BOUND_DAMPING;
                 p[i].position.x = EPS;
             }
+
+            let new_bucket = get_pos_hash(&p[i].position);
+
+            match self.buckets.get_mut(&old_bucket) {
+                Some(points) => {points.retain(|&x| x != i as i32); ()},
+                None => (),
+            };
+
+            match self.buckets.get_mut(&new_bucket) {
+                Some(points) => {points.push(i as i32); ()},
+                None => {self.buckets.insert(new_bucket, vec![i as i32]); ()},
+            };
         }
+
+        //print buckets:
+
     }
+}
+
+fn get_pos_hash(p: &Vec2d) -> i32 {
+    (p.x /BUCKET_SIZE).floor() as i32+
+    HORIZONTAL_BUCKET_COUNT*(p.y/BUCKET_SIZE).floor() as i32
 }
 
 fn main() {
 
     let opengl = OpenGL::V3_2;
 
-    let mut window: Window = WindowSettings::new("SPH", [1000, 800])
+    let mut window: Window = WindowSettings::new("SPH", [WINDOW_WIDTH, WINDOW_HEIGHT])
         .graphics_api(opengl)
         .exit_on_esc(true)
         .build()
@@ -227,7 +255,8 @@ fn main() {
                 }
             }
             particles
-        }
+        },
+        buckets: HashMap::new()
     };
 
     let mut events = Events::new(EventSettings::new());
