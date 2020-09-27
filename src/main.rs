@@ -9,8 +9,6 @@ use piston::event_loop::{EventSettings, Events};
 use piston::input::{RenderArgs, RenderEvent, UpdateArgs, UpdateEvent};
 use piston::window::WindowSettings;
 
-use rand::Rng;
-
 mod vec_math;
 mod particle_fluid;
 
@@ -69,12 +67,7 @@ fn main() {
             for x in 0..70 {
                 for y in 0..20 {
 
-                    let x_jitter = rand::thread_rng()
-                        .gen_range(1, 1000) as f32/1000.0;
-                    let y_jitter = rand::thread_rng()
-                        .gen_range(1, 1000) as f32/1000.0;
-
-                    particles.push(vec_math::Vec2d {x: x as f32*kernel_size + 100.0 + x_jitter, y: y as f32*kernel_size + 300.0 + y_jitter});
+                    particles.push(vec_math::Vec2d {x: x as f32*kernel_size + 100.0, y: y as f32*kernel_size + 300.0});
                 }
             }
             let params = particle_fluid::Parameters::new(kernel_size, WINDOW_WIDTH, WINDOW_HEIGHT);

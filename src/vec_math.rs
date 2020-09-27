@@ -1,5 +1,5 @@
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Vec2d {
     pub x: f32,
     pub y: f32,

@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use super::vec_math::Vec2d;
 use std::f32::consts::PI;
+use rand::Rng;
 
 pub struct Parameters {
 
@@ -21,6 +22,7 @@ pub struct Parameters {
     horizontal_bucket_count: i32,
     surrounding_bucket_index_offsets: [i32; 8],
     epsilon: f32,
+    jitter: f32,
 
     //Internals:
     poly_6: f32,
@@ -46,6 +48,7 @@ impl Parameters {
         ];
 
         let epsilon = kernel_radius;
+        let jitter = kernel_radius/1e5;
 
         Parameters {
             kernel_radius,
@@ -65,6 +68,7 @@ impl Parameters {
             poly_6: 315.0/(65.0*PI*kernel_radius.powf(9.0)),
             spiky_grad: -45.0/(PI*kernel_radius.powf(6.0)),
             visc_lap: 45.0/(PI*kernel_radius.powf(6.0)),
+            jitter,
         }
     }
 
@@ -83,13 +87,22 @@ pub struct ParticleFluid {
 impl ParticleFluid {
     pub fn new(params: Parameters, particle_positions: Vec<Vec2d>) -> ParticleFluid {
 
+
         let particles: Vec<Particle> = particle_positions.into_iter()
-            .map(|p| Particle { 
-                position: p,
-                velocity: Vec2d {x: 0.0, y: 0.0},
-                force: Vec2d {x: 0.0, y: 0.0},
-                density: 0.0,
-                pressure: 0.0,
+            .map(|p| {
+
+                let jitter = || { rand::thread_rng()
+                    .gen_range(0, 1000) as f32*params.jitter };
+
+                let position = Vec2d{x: jitter(), y: jitter()}.add(&p).copy();
+
+                Particle { 
+                    position,
+                    velocity: Vec2d {x: 0.0, y: 0.0},
+                    force: Vec2d {x: 0.0, y: 0.0},
+                    density: 0.0,
+                    pressure: 0.0,
+                }
             }).collect();
 
         let mut buckets: HashMap<i32, Vec<usize>> = HashMap::new();
@@ -111,9 +124,15 @@ impl ParticleFluid {
 
     pub fn step(&mut self, dt: f32) {
 
+        self.calculate_pressure_and_density();
+        self.calculate_forces();
+        self.update_positions(dt);
+    }
+
+    fn calculate_pressure_and_density(&mut self) {
+
         let p: &mut [Particle] = &mut self.particles;
 
-        //Calculate pressure and density:
         for i in 0..p.len() {
             p[i].density = 0.0;
         }
@@ -135,12 +154,20 @@ impl ParticleFluid {
         }
 
         for i in 0..p.len() {
-            p[i].pressure = self.params.gas_const*(p[i].density - self.params.particle_rest_density);
+            p[i].pressure = self.params.gas_const*
+                (p[i].density - self.params.particle_rest_density); 
+        }
+    }
+
+    fn calculate_forces(&mut self) {
+
+        let p: &mut [Particle] = &mut self.particles;
+
+        for i in 0..p.len() {
             p[i].force = self.params.gravity.copy();
             p[i].force.mult(p[i].density);
         }
 
-        //Calculate forces:
         for bucket_index in self.buckets.keys() {
 
             let bucket_locality = BucketLocality::new(
@@ -175,8 +202,12 @@ impl ParticleFluid {
                 }
             }
         }
+    }
 
-        //Update positions:
+    fn update_positions(&mut self, dt: f32) {
+
+        let p: &mut [Particle] = &mut self.particles;
+
         for i in 0..p.len() {
 
             let old_bucket = self.params.get_pos_hash(&p[i].position);
@@ -211,22 +242,26 @@ impl ParticleFluid {
 
             let new_bucket = self.params.get_pos_hash(&p[i].position);
 
-            if !(old_bucket == new_bucket) {
-                match self.buckets.get_mut(&old_bucket) {
-                    Some(points) => {
-                        points.retain(|&x| x != i);
-                        if points.len() == 0 {
-                            self.buckets.remove(&old_bucket);
-                        }
-                        ()},
-                    None => (),
-                };
-            
-                match self.buckets.get_mut(&new_bucket) {
-                    Some(points) => {points.push(i); ()},
-                    None => {self.buckets.insert(new_bucket, vec![i]); ()},
-                };
-            }
+            ParticleFluid::update_bucket(&mut self.buckets, old_bucket, new_bucket, i);
+        }
+    }
+
+    fn update_bucket(buckets: &mut HashMap<i32, Vec<usize>>, old_bucket: i32, new_bucket: i32, particle_index: usize) {
+        if !(old_bucket == new_bucket) {
+            match buckets.get_mut(&old_bucket) {
+                Some(points) => {
+                    points.retain(|&x| x != particle_index);
+                    if points.len() == 0 {
+                        buckets.remove(&old_bucket);
+                    }
+                    ()},
+                None => (),
+            };
+        
+            match buckets.get_mut(&new_bucket) {
+                Some(points) => {points.push(particle_index); ()},
+                None => {buckets.insert(new_bucket, vec![particle_index]); ()},
+            };
         }
     }
 }
