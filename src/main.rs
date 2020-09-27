@@ -12,7 +12,7 @@ use piston::window::WindowSettings;
 use rand::Rng;
 use std::collections::HashMap;
 
-const KERNEL_RADIUS: f64 = 8.0;
+const KERNEL_RADIUS: f64 = 16.0;
 const KR_SQUARED: f64 = KERNEL_RADIUS*KERNEL_RADIUS;
 const BUCKET_SIZE: f64 = KERNEL_RADIUS;
 
@@ -52,72 +52,50 @@ const OTHER_BUCKET_OFFSETS: [i32; 9] = [
      HORIZONTAL_BUCKET_COUNT,
      HORIZONTAL_BUCKET_COUNT + 1];
 
-struct BucketLocality<'a> {
-    buckets: &'a HashMap<i32, Vec<usize>>,
-    main_particle_bucket_index: usize,
-    other_particle_bucket_index: usize,
-    main_bucket_index: i32,
-    other_bucket_offset_index: usize,
+struct BucketLocality<> {
+    combinations: Vec<(usize, usize)>,
+    index: usize,
 }
 
-impl BucketLocality<'_> {
+impl BucketLocality<> {
     fn new(bucket_index: i32, buckets: &HashMap<i32, Vec<usize>>) -> BucketLocality {
 
-        BucketLocality { 
-            buckets: buckets,
-            main_particle_bucket_index: 0,
-            other_particle_bucket_index: 0,
-            main_bucket_index: bucket_index,
-            other_bucket_offset_index: 0,
+        let mut main = vec![];
+        match buckets.get(&bucket_index) {
+            Some(points) => for p in points { main.push(p) },
+            None => (),
         }
+
+        let mut all = vec![];
+        for offset in OTHER_BUCKET_OFFSETS.iter() {
+            match buckets.get(&(bucket_index + offset)) {
+                Some(points) => for p in points { all.push(p) },
+                None => (),
+            }
+        };
+
+        let mut combinations = vec![];
+
+        for m in &main {
+            for o in &all {
+                combinations.push((**m, **o));
+            }
+        }
+        BucketLocality { combinations, index: 0 }
     }
 }
 
-impl Iterator for BucketLocality<'_> {
+impl Iterator for BucketLocality {
     type Item = (usize, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
-
-        let main_index = match self.buckets.get(&self.main_bucket_index) {
-            Some(points) => points.get(self.main_particle_bucket_index),
-            None => None,
-        };
-
-        if main_index.is_none() {
-            None
+        let next = self.combinations.get(self.index);
+        self.index += 1;
+        if next.is_some() {
+            let val = next.unwrap();
+            Some((val.0, val.1))
         } else {
-            let mut other_index: Option<usize> = None;
-
-            while other_index.is_none() {
-                other_index = match self.buckets.get(&(self.main_bucket_index + OTHER_BUCKET_OFFSETS[self.other_bucket_offset_index])) {
-                    Some(points) => 
-                    match points.get(self.other_particle_bucket_index) { 
-                        Some(p) => {
-                            self.other_particle_bucket_index += 1;
-                            Some(*p)},
-                        None => {
-                            self.other_particle_bucket_index = 0;
-                            self.other_bucket_offset_index += 1;
-                            if OTHER_BUCKET_OFFSETS.len() <= self.other_bucket_offset_index {
-                                self.other_bucket_offset_index = 0;
-                                self.main_particle_bucket_index += 1;
-                                return self.next();
-                            }
-                            None
-                        }
-                    },
-                    None => {
-                        self.other_bucket_offset_index += 1;
-                        if OTHER_BUCKET_OFFSETS.len() <= self.other_bucket_offset_index {
-                                self.other_bucket_offset_index = 0;
-                                self.main_particle_bucket_index += 1;
-                                return self.next();
-                        }
-                        None
-                    },
-                };
-            };
-            Some((*main_index.unwrap(), other_index.unwrap()))
+            None
         }
     }
 }
@@ -170,7 +148,7 @@ impl App {
         const BACKGROUND: [f32; 4] = [0.9, 0.85, 1.0, 1.0];
         const PARTICLE: [f32; 4] = [0.3, 0.5, 0.9, 1.0];
 
-        let circle = ellipse::circle(0.0, 0.0, 3.0);
+        let circle = ellipse::circle(0.0, 0.0, 5.0);
 
         self.gl.draw(args.viewport(), |_c, gl| {
             clear(BACKGROUND, gl);
@@ -190,7 +168,7 @@ impl App {
 
         // simulation parameters
 
-        const MASS: f64 = 45.0;
+        const MASS: f64 = 65.0;
         const REST_DENS: f64 = 1000.0;
         const GAS_CONST: f64 = 2000.0;
         
@@ -267,9 +245,9 @@ impl App {
             p[i].velocity.add(p[i].force.mult(DT/p[i].density));
             p[i].position.add(p[i].velocity.copy().mult(DT));
 
-            if p[i].position.y > 800.0 - EPS {
+            if p[i].position.y > WINDOW_HEIGHT - EPS {
                 p[i].velocity.y *= BOUND_DAMPING;
-                p[i].position.y = 800.0 - EPS;
+                p[i].position.y = WINDOW_HEIGHT - EPS;
             }
 
             if p[i].position.y < EPS {
@@ -277,9 +255,9 @@ impl App {
                 p[i].position.y = EPS;
             }
 
-            if p[i].position.x > 1000.0 - EPS {
+            if p[i].position.x > WINDOW_WIDTH - EPS {
                 p[i].velocity.x *= BOUND_DAMPING;
-                p[i].position.x = 1000.0 - EPS;
+                p[i].position.x = WINDOW_WIDTH - EPS;
             }
 
             if p[i].position.x < EPS {
@@ -329,8 +307,8 @@ fn main() {
         gl: GlGraphics::new(opengl),
         particles: {
             let mut particles = vec![];
-            for x in 0..70 {
-                for y in 0..70 {
+            for x in 0..25 {
+                for y in 0..25 {
 
                     let x_jitter = rand::thread_rng()
                         .gen_range(1, 1000) as f64/1000.0;
@@ -338,7 +316,7 @@ fn main() {
                         .gen_range(1, 1000) as f64/1000.0;
 
                     particles.push(Particle {
-                        position: Vec2d {x: x as f64*KERNEL_RADIUS + 100.0 + x_jitter, y: y as f64*KERNEL_RADIUS + 100.0 + y_jitter},
+                        position: Vec2d {x: x as f64*KERNEL_RADIUS + 100.0 + x_jitter, y: y as f64*KERNEL_RADIUS + 300.0 + y_jitter},
                         velocity: Vec2d {x: 0.0, y: 0.0},
                         force: Vec2d {x: 0.0, y: 0.0},
                         density: 0.0,
