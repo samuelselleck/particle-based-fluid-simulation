@@ -298,8 +298,8 @@ fn main() {
         gl: GlGraphics::new(opengl),
         particles: {
             let mut particles = vec![];
-            for x in 0..30 {
-                for y in 0..30 {
+            for x in 0..40 {
+                for y in 0..40 {
 
                     let x_jitter = rand::thread_rng()
                         .gen_range(1, 1000) as f64/1000.0;
@@ -307,7 +307,7 @@ fn main() {
                         .gen_range(1, 1000) as f64/1000.0;
 
                     particles.push(Particle {
-                        position: Vec2d {x: x as f64*KERNEL_RADIUS + 100.0 + x_jitter, y: y as f64*KERNEL_RADIUS + 300.0 + y_jitter},
+                        position: Vec2d {x: x as f64*KERNEL_RADIUS + 100.0 + x_jitter, y: y as f64*KERNEL_RADIUS + 100.0 + y_jitter},
                         velocity: Vec2d {x: 0.0, y: 0.0},
                         force: Vec2d {x: 0.0, y: 0.0},
                         density: 0.0,
