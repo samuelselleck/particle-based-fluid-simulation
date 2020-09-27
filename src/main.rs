@@ -12,7 +12,7 @@ use piston::window::WindowSettings;
 use rand::Rng;
 use std::collections::HashMap;
 
-const KERNEL_RADIUS: f64 = 20.0;
+const KERNEL_RADIUS: f64 = 8.0;
 const KR_SQUARED: f64 = KERNEL_RADIUS*KERNEL_RADIUS;
 const BUCKET_SIZE: f64 = KERNEL_RADIUS;
 
@@ -20,14 +20,15 @@ const WINDOW_WIDTH: f64 = 1000.0;
 const WINDOW_HEIGHT: f64 = 800.0;
 
 const HORIZONTAL_BUCKET_COUNT: i32 = 
-    (WINDOW_WIDTH as f64/KERNEL_RADIUS) as i32 + 1;
+    (WINDOW_WIDTH as f64/BUCKET_SIZE) as i32 + 1;
 
 pub struct App {
     gl: GlGraphics,
     particles: Vec<Particle>,
-    buckets: HashMap<i32, Vec<i32>>,
+    buckets: HashMap<i32, Vec<usize>>,
 }
 
+#[derive(Debug)]
 pub struct Particle {
     position: Vec2d,
     velocity: Vec2d,
@@ -40,6 +41,85 @@ pub struct Particle {
 struct Vec2d {
     x: f64,
     y: f64,
+}
+
+const OTHER_BUCKET_OFFSETS: [i32; 9] = [
+    -HORIZONTAL_BUCKET_COUNT - 1,
+    -HORIZONTAL_BUCKET_COUNT,
+    -HORIZONTAL_BUCKET_COUNT + 1,
+     -1, 0, 1,
+     HORIZONTAL_BUCKET_COUNT - 1,
+     HORIZONTAL_BUCKET_COUNT,
+     HORIZONTAL_BUCKET_COUNT + 1];
+
+struct BucketLocality<'a> {
+    buckets: &'a HashMap<i32, Vec<usize>>,
+    main_particle_bucket_index: usize,
+    other_particle_bucket_index: usize,
+    main_bucket_index: i32,
+    other_bucket_offset_index: usize,
+}
+
+impl BucketLocality<'_> {
+    fn new(bucket_index: i32, buckets: &HashMap<i32, Vec<usize>>) -> BucketLocality {
+
+        BucketLocality { 
+            buckets: buckets,
+            main_particle_bucket_index: 0,
+            other_particle_bucket_index: 0,
+            main_bucket_index: bucket_index,
+            other_bucket_offset_index: 0,
+        }
+    }
+}
+
+impl Iterator for BucketLocality<'_> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+        let main_index = match self.buckets.get(&self.main_bucket_index) {
+            Some(points) => points.get(self.main_particle_bucket_index),
+            None => None,
+        };
+
+        if main_index.is_none() {
+            None
+        } else {
+            let mut other_index: Option<usize> = None;
+
+            while other_index.is_none() {
+                other_index = match self.buckets.get(&(self.main_bucket_index + OTHER_BUCKET_OFFSETS[self.other_bucket_offset_index])) {
+                    Some(points) => 
+                    match points.get(self.other_particle_bucket_index) { 
+                        Some(p) => {
+                            self.other_particle_bucket_index += 1;
+                            Some(*p)},
+                        None => {
+                            self.other_particle_bucket_index = 0;
+                            self.other_bucket_offset_index += 1;
+                            if OTHER_BUCKET_OFFSETS.len() <= self.other_bucket_offset_index {
+                                self.other_bucket_offset_index = 0;
+                                self.main_particle_bucket_index += 1;
+                                return self.next();
+                            }
+                            None
+                        }
+                    },
+                    None => {
+                        self.other_bucket_offset_index += 1;
+                        if OTHER_BUCKET_OFFSETS.len() <= self.other_bucket_offset_index {
+                                self.other_bucket_offset_index = 0;
+                                self.main_particle_bucket_index += 1;
+                                return self.next();
+                        }
+                        None
+                    },
+                };
+            };
+            Some((*main_index.unwrap(), other_index.unwrap()))
+        }
+    }
 }
 
 impl Vec2d {
@@ -90,7 +170,7 @@ impl App {
         const BACKGROUND: [f32; 4] = [0.9, 0.85, 1.0, 1.0];
         const PARTICLE: [f32; 4] = [0.3, 0.5, 0.9, 1.0];
 
-        let circle = ellipse::circle(0.0, 0.0, 8.0);
+        let circle = ellipse::circle(0.0, 0.0, 3.0);
 
         self.gl.draw(args.viewport(), |_c, gl| {
             clear(BACKGROUND, gl);
@@ -110,7 +190,7 @@ impl App {
 
         // simulation parameters
 
-        const MASS: f64 = 65.0;
+        const MASS: f64 = 45.0;
         const REST_DENS: f64 = 1000.0;
         const GAS_CONST: f64 = 2000.0;
         
@@ -131,21 +211,30 @@ impl App {
         //Calculate pressure and density:
         for i in 0..p.len() {
             p[i].density = 0.0;
-            for j in 0..p.len() {
+        }
+        
+        for bucket_index in self.buckets.keys() {
+            let bucket_locality = BucketLocality::new(*bucket_index, &self.buckets);
+
+            for (i, j) in bucket_locality {
                 let dist_sq = p[i].position.dist_squared(&p[j].position);
                 if dist_sq < KR_SQUARED {
-                    p[i].density += MASS*poly_6*(KR_SQUARED - dist_sq).powf(3.0)
+                    p[i].density += MASS*poly_6*(KR_SQUARED - dist_sq).powf(3.0);
                 }
             }
+        }
+        for i in 0..p.len() {
             p[i].pressure = GAS_CONST*(p[i].density - REST_DENS);
+            p[i].force = G.copy();
+            p[i].force.mult(p[i].density);
         }
 
         //Calculate forces:
-        for i in 0..p.len() {
-            let mut pressure_force = Vec2d { x: 0.0, y: 0.0 };
-            let mut viscosity_force = Vec2d { x: 0.0, y: 0.0 };
+        for bucket_index in self.buckets.keys() {
 
-            for j in 0..p.len() {
+            let bucket_locality = BucketLocality::new(*bucket_index, &self.buckets);
+            for (i, j) in bucket_locality {
+
                 if i == j {
                     continue;
                 }
@@ -161,15 +250,13 @@ impl App {
                         (p[i].pressure + p[j].pressure)/
                         (2.0*p[j].density)*
                         spiky_grad*(KERNEL_RADIUS - distance).powf(2.0);
-                    pressure_force.add(dir.mult(factor));
+                    p[i].force.add(dir.mult(factor));
 
                     let factor = VISC*MASS/p[j].density*visc_lap*(KERNEL_RADIUS-distance);
                     let mut j_vel_copy = p[j].velocity.copy();
-                    viscosity_force.add((&mut j_vel_copy).sub(&p[i].velocity).mult(factor));
+                    p[i].force.add((&mut j_vel_copy).sub(&p[i].velocity).mult(factor));
                 }
             }
-            p[i].force = Vec2d{x: 0.0, y: 0.0 };
-            p[i].force.add(&pressure_force).add(&viscosity_force).add(G.copy().mult(p[i].density));
         }
 
         //Update positions:
@@ -202,20 +289,25 @@ impl App {
 
             let new_bucket = get_pos_hash(&p[i].position);
 
-            match self.buckets.get_mut(&old_bucket) {
-                Some(points) => {points.retain(|&x| x != i as i32); ()},
-                None => (),
-            };
-
-            match self.buckets.get_mut(&new_bucket) {
-                Some(points) => {points.push(i as i32); ()},
-                None => {self.buckets.insert(new_bucket, vec![i as i32]); ()},
-            };
+            if !(old_bucket == new_bucket) {
+                match self.buckets.get_mut(&old_bucket) {
+                    Some(points) => {
+                        points.retain(|&x| x != i);
+                        if points.len() == 0 {
+                            self.buckets.remove(&old_bucket);
+                        }
+                        ()},
+                    None => (),
+                };
+            
+                match self.buckets.get_mut(&new_bucket) {
+                    Some(points) => {points.push(i); ()},
+                    None => {self.buckets.insert(new_bucket, vec![i]); ()},
+                };
+            }
         }
-
-        //print buckets:
-
     }
+
 }
 
 fn get_pos_hash(p: &Vec2d) -> i32 {
@@ -237,8 +329,8 @@ fn main() {
         gl: GlGraphics::new(opengl),
         particles: {
             let mut particles = vec![];
-            for x in 0..20 {
-                for y in 0..20 {
+            for x in 0..70 {
+                for y in 0..70 {
 
                     let x_jitter = rand::thread_rng()
                         .gen_range(1, 1000) as f64/1000.0;
@@ -246,7 +338,7 @@ fn main() {
                         .gen_range(1, 1000) as f64/1000.0;
 
                     particles.push(Particle {
-                        position: Vec2d {x: x as f64*KERNEL_RADIUS + 100.0 + x_jitter, y: y as f64*KERNEL_RADIUS + 300.0 + y_jitter},
+                        position: Vec2d {x: x as f64*KERNEL_RADIUS + 100.0 + x_jitter, y: y as f64*KERNEL_RADIUS + 100.0 + y_jitter},
                         velocity: Vec2d {x: 0.0, y: 0.0},
                         force: Vec2d {x: 0.0, y: 0.0},
                         density: 0.0,
@@ -258,6 +350,15 @@ fn main() {
         },
         buckets: HashMap::new()
     };
+
+    //Init buckets:
+    for i in 0..app.particles.len() {
+        let bucket = get_pos_hash(&app.particles[i].position);
+        match app.buckets.get_mut(&bucket) {
+            Some(points) => {points.push(i); ()},
+            None => {app.buckets.insert(bucket, vec![i]); ()},
+        }
+    }
 
     let mut events = Events::new(EventSettings::new());
 
