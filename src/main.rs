@@ -53,7 +53,8 @@ const OTHER_BUCKET_OFFSETS: [i32; 9] = [
      HORIZONTAL_BUCKET_COUNT + 1];
 
 struct BucketLocality<> {
-    combinations: Vec<(usize, usize)>,
+    all: Vec<usize>,
+    main: Vec<usize>,
     index: usize,
 }
 
@@ -62,26 +63,19 @@ impl BucketLocality<> {
 
         let mut main = vec![];
         match buckets.get(&bucket_index) {
-            Some(points) => for p in points { main.push(p) },
+            Some(points) => for p in points { main.push(*p) },
             None => (),
         }
 
         let mut all = vec![];
         for offset in OTHER_BUCKET_OFFSETS.iter() {
             match buckets.get(&(bucket_index + offset)) {
-                Some(points) => for p in points { all.push(p) },
+                Some(points) => for p in points { all.push(*p) },
                 None => (),
             }
         };
 
-        let mut combinations = vec![];
-
-        for m in &main {
-            for o in &all {
-                combinations.push((**m, **o));
-            }
-        }
-        BucketLocality { combinations, index: 0 }
+        BucketLocality { all, main, index: 0 }
     }
 }
 
@@ -89,14 +83,11 @@ impl Iterator for BucketLocality {
     type Item = (usize, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next = self.combinations.get(self.index);
+        let main_index = self.index / self.all.len();
+        if main_index >= self.main.len() { return None }
+        let other_index = self.index % self.all.len();
         self.index += 1;
-        if next.is_some() {
-            let val = next.unwrap();
-            Some((val.0, val.1))
-        } else {
-            None
-        }
+        Some((self.main[main_index], self.all[other_index]))
     }
 }
 
@@ -307,8 +298,8 @@ fn main() {
         gl: GlGraphics::new(opengl),
         particles: {
             let mut particles = vec![];
-            for x in 0..25 {
-                for y in 0..25 {
+            for x in 0..30 {
+                for y in 0..30 {
 
                     let x_jitter = rand::thread_rng()
                         .gen_range(1, 1000) as f64/1000.0;
